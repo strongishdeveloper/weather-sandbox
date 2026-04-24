@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>How Weather Works</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body, #root { width: 100%; height: 100%; overflow: hidden; background: #030810; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="animations.jsx"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+// ── Constants & Helpers ──────────────────────────────────────────────────────
+const FONT = "'DM Sans', system-ui, sans-serif";
+const W = 1280, H = 720;
+
+const sr = (s) => { const x = Math.sin(s + 1) * 10000; return x - Math.floor(x); };
+const STAR_DATA = Array.from({ length: 220 }, (_, i) => ({
+  x: sr(i * 2.3) * W, y: sr(i * 3.7) * H,
+  r: sr(i * 1.9) * 1.4 + 0.3,
+  o: sr(i * 5.1) * 0.45 + 0.2,
+  f: sr(i * 7.3) * 2.2 + 0.5,
+}));
+
+// Pre-compute convection particles
+const CONV_PARTICLES = Array.from({ length: 16 }, (_, i) => ({
+  xOff: (sr(i * 3.7) - 0.5) * 100,
+  phase: sr(i * 5.2),
+  speed: 0.25 + sr(i * 2.1) * 0.3,
+  size: 8 + sr(i * 4.3) * 10,
+}));
+
+// ── Reusable Base Components ─────────────────────────────────────────────────
+
+function Stars({ opacity = 1 }) {
+  const t = useTime();
+  return (
+    <div style={{ position: 'absolute', inset: 0, opacity }}>
+      {STAR_DATA.map((s, i) => (
+        <div key={i} style={{
+          position: 'absolute', left: s.x - s.r, top: s.y - s.r,
+          width: s.r * 2, height: s.r * 2, borderRadius: '50%', background: '#fff',
+          opacity: s.o * (0.7 + 0.3 * Math.sin(t * s.f + i)),
+        }} />
+      ))}
+    </div>
+  );
+}
+
+function Scene({ start, end, fadeDur = 0.9, children }) {
+  const t = useTime();
+  if (t < start - 0.1 || t > end + 0.1) return null;
+  const op = Math.min(
+    Easing.easeOutCubic(clamp((t - start) / fadeDur, 0, 1)),
+    Easing.easeOutCubic(clamp((end - t) / fadeDur, 0, 1))
+  );
+  return <div style={{ position: 'absolute', inset: 0, opacity: op }}>{children}</div>;
+}
+
+function Caption({ x, y, text, sub, size = 30, color = 'rgba(255,255,255,0.95)', align = 'center', atTime }) {
+  const t = useTime();
+  const op = Easing.easeOutCubic(clamp((t - atTime) / 0.7, 0, 1));
+  const tx = align === 'center' ? '-50%' : '0';
+  return (
+    <div style={{
+      position: 'absolute', left: x, top: y,
+      transform: `translate(${tx}, ${(1 - op) * 14}px)`,
+      opacity: op, fontFamily: FONT, textAlign: align === 'center' ? 'center' : 'left',
+      textShadow: '0 2px 16px rgba(0,0,0,0.7)',
+    }}>
+      <div style={{ fontSize: size, fontWeight: 500, color, lineHeight: 1.25 }}>{text}</div>
+      {sub && <div style={{ fontSize: size * 0.58, fontWeight: 300, color: 'rgba(200,220,255,0.7)', marginTop: 8 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function EarthDiv({ size, glow = true }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      background: 'radial-gradient(circle at 38% 32%, #4fc3f7 0%, #1976d2 22%, #0d47a1 52%, #041228 100%)',
+      boxShadow: glow ? '0 0 90px 30px rgba(50,130,255,0.28)' : undefined,
+      overflow: 'hidden', position: 'relative', flexShrink: 0,
+    }}>
+      <div style={{ position: 'absolute', left: '11%', top: '17%', width: '27%', height: '32%',
+        background: '#2e7d32', borderRadius: '44% 56% 36% 64%', opacity: 0.92 }} />
+      <div style={{ position: 'absolute', left: '41%', top: '13%', width: '19%', height: '54%',
+        background: '#388e3c', borderRadius: '30% 50% 42% 46%', opacity: 0.88 }} />
+      <div style={{ position: 'absolute', left: '57%', top: '9%', width: '33%', height: '44%',
+        background: '#2e7d32', borderRadius: '55% 30% 60% 24%', opacity: 0.92 }} />
+      <div style={{ position: 'absolute', left: '17%', top: '53%', width: '18%', height: '32%',
+        background: '#388e3c', borderRadius: '38% 44% 54% 34%', opacity: 0.87 }} />
+      <div style={{ position: 'absolute', left: '62%', top: '56%', width: '24%', height: '22%',
+        background: '#1b5e20', borderRadius: '44% 56% 48% 52%', opacity: 0.82 }} />
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'radial-gradient(circle at 68% 60%, transparent 26%, rgba(0,5,20,0.82) 63%)',
+      }} />
+    </div>
+  );
+}
+
+function SunDiv({ size }) {
+  const t = useTime();
+  const pulse = 1 + 0.035 * Math.sin(t * 1.4);
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      background: 'radial-gradient(circle at 42% 40%, #fffbe0 0%, #ffe033 30%, #ff9500 72%, #e65100 100%)',
+      boxShadow: `0 0 ${size * 0.55 * pulse}px ${size * 0.22 * pulse}px rgba(255,170,0,0.55),
+                  0 0 ${size * 1.1 * pulse}px ${size * 0.45 * pulse}px rgba(255,120,0,0.2)`,
+      flexShrink: 0,
+    }} />
+  );
+}
+
+function SvgArrow({ x1, y1, x2, y2, color = 'white', width = 2, opacity = 1, dashed = false, headSize = 12 }) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len < 1) return null;
+  const ux = dx / len, uy = dy / len;
+  const nx = -uy, ny = ux;
+  const ax = x2 - ux * headSize - nx * (headSize * 0.6);
+  const ay = y2 - uy * headSize - ny * (headSize * 0.6);
+  const bx = x2 - ux * headSize + nx * (headSize * 0.6);
+  const by = y2 - uy * headSize + ny * (headSize * 0.6);
+  return (
+    <g opacity={opacity}>
+      <line x1={x1} y1={y1} x2={x2 - ux * headSize * 0.5} y2={y2 - uy * headSize * 0.5}
+        stroke={color} strokeWidth={width} strokeDasharray={dashed ? '8 5' : undefined} strokeLinecap="round" />
+      <polygon points={`${x2},${y2} ${ax},${ay} ${bx},${by}`} fill={color} />
+    </g>
+  );
+}
+
+function TimeTagger() {
+  const t = useTime();
+  React.useEffect(() => {
+    const el = document.getElementById('stage-wrap');
+    if (el) el.setAttribute('data-screen-label', `t=${Math.floor(t)}s`);
+  }, [Math.floor(t)]);
+  return null;
+}
+
+// ── SCENE 1: Title ────────────────────────────────────────────────────────────
+function SceneTitle() {
+  const t = useTime();
+  const earthS = animate({ from: 0.88, to: 1.0, start: 0, end: 2.5, ease: Easing.easeOutCubic })(t);
+  const titleOp = animate({ from: 0, to: 1, start: 0.8, end: 2.4, ease: Easing.easeOutCubic })(t);
+  const titleY = animate({ from: 24, to: 0, start: 0.8, end: 2.4, ease: Easing.easeOutCubic })(t);
+  const subOp = animate({ from: 0, to: 1, start: 1.8, end: 3.0, ease: Easing.easeOutCubic })(t);
+  const R = 240;
+  return (
+    <>
+      <div style={{
+        position: 'absolute', left: 640 - R, top: 360 - R,
+        transform: `scale(${earthS})`, transformOrigin: 'center',
+      }}>
+        <EarthDiv size={R * 2} glow={true} />
+      </div>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'radial-gradient(ellipse 80% 50% at 50% 100%, rgba(3,8,16,0.85) 0%, transparent 60%)',
+      }} />
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 108,
+        textAlign: 'center', opacity: titleOp, transform: `translateY(${titleY}px)`,
+        fontFamily: FONT, fontSize: 80, fontWeight: 700, color: '#fff',
+        letterSpacing: '-0.03em', textShadow: '0 4px 40px rgba(0,0,0,0.6)',
+      }}>HOW WEATHER WORKS</div>
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 70,
+        textAlign: 'center', opacity: subOp * titleOp,
+        fontFamily: FONT, fontSize: 20, fontWeight: 300, letterSpacing: '0.15em',
+        color: 'rgba(160,200,255,0.8)',
+      }}>ATMOSPHERE · WIND · OCEANS · MOON</div>
+    </>
+  );
+}
+
+// ── SCENE 2: The Sun Heats Earth ──────────────────────────────────────────────
+function SceneSun() {
+  const t = useTime();
+  const sunX = animate({ from: -200, to: -60, start: 5, end: 7.5, ease: Easing.easeOutCubic })(t);
+  const earthX = animate({ from: 640 - 220, to: 790 - 220, start: 5.2, end: 7.5, ease: Easing.easeInOutCubic })(t);
+  const raysOp = animate({ from: 0, to: 1, start: 7.2, end: 9.0, ease: Easing.easeOutCubic })(t);
+  const labelOp = animate({ from: 0, to: 1, start: 9.0, end: 10.5, ease: Easing.easeOutCubic })(t);
+  const brightOp = animate({ from: 0, to: 1, start: 9.5, end: 11.0, ease: Easing.easeOutCubic })(t);
+
+  const SUN_SIZE = 190;
+  const earthCX = earthX + 220;
+  const earthCY = 360;
+  const earthR = 220;
+
+  const rayOffsets = [-175, -135, -95, -55, -18, 0, 18, 55, 95, 135, 175];
+  const rays = rayOffsets.map(dy => {
+    const absD = Math.abs(dy);
+    if (absD >= earthR) return null;
+    const hitX = earthCX - Math.sqrt(earthR * earthR - dy * dy);
+    const conc = 1 - absD / earthR;
+    return {
+      x1: 60, y1: earthCY + dy,
+      x2: hitX, y2: earthCY + dy,
+      op: 0.2 + conc * 0.75,
+      w: 0.5 + conc * 3.0,
+    };
+  }).filter(Boolean);
+
+  return (
+    <>
+      <div style={{ position: 'absolute', left: sunX, top: 360 - SUN_SIZE / 2 }}>
+        <SunDiv size={SUN_SIZE} />
+      </div>
+      <div style={{ position: 'absolute', left: earthX, top: earthCY - earthR }}>
+        <EarthDiv size={earthR * 2} glow={true} />
+      </div>
+
+      <svg style={{ position: 'absolute', inset: 0, width: W, height: H, pointerEvents: 'none' }}>
+        <defs>
+          <radialGradient id="equatorGlow" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="rgba(255,220,80,0.4)" />
+            <stop offset="100%" stopColor="rgba(255,220,80,0)" />
+          </radialGradient>
+        </defs>
+        <g opacity={raysOp}>
+          {rays.map((r, i) => (
+            <SvgArrow key={i} x1={r.x1} y1={r.y1} x2={r.x2} y2={r.y2}
+              color="rgba(255,215,60,0.85)" width={r.w} opacity={r.op} headSize={8} />
+          ))}
+        </g>
+        {/* Equatorial glow on Earth */}
+        <ellipse cx={earthCX - 10} cy={earthCY} rx={40} ry={earthR * 0.18}
+          fill="rgba(255,230,100,0.18)" opacity={brightOp} />
+        {/* Labels on rays */}
+        <g opacity={brightOp} fontFamily={FONT} fill="rgba(255,220,80,0.85)">
+          <text x={earthCX - 5} y={earthCY + 6} textAnchor="middle" fontSize={15} fontWeight={600}>DIRECT</text>
+          <text x={earthCX + 30} y={earthCY - 175} textAnchor="middle" fontSize={13} fontWeight={400} opacity={0.6}>ANGLED</text>
+          <text x={earthCX + 30} y={earthCY + 183} textAnchor="middle" fontSize={13} fontWeight={400} opacity={0.6}>ANGLED</text>
+        </g>
+        {/* Equator line */}
+        <line x1={earthCX - earthR} y1={earthCY} x2={earthCX + earthR * 0.1} y2={earthCY}
+          stroke="rgba(255,255,255,0.2)" strokeWidth={1} strokeDasharray="4 4" opacity={brightOp} />
+      </svg>
+
+      <div style={{
+        position: 'absolute', left: 640, bottom: 72, transform: 'translateX(-50%)',
+        textAlign: 'center', opacity: labelOp,
+        transform: `translate(-50%, ${(1 - labelOp) * 12}px)`,
+      }}>
+        <div style={{ fontFamily: FONT, fontSize: 34, fontWeight: 500, color: 'rgba(255,240,180,0.95)' }}>
+          The Sun warms Earth — unevenly
+        </div>
+        <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 300, color: 'rgba(200,220,255,0.7)', marginTop: 8 }}>
+          Direct rays at the equator carry far more energy than angled rays at the poles
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── SCENE 3: Convection ───────────────────────────────────────────────────────
+function SceneConvection() {
+  const t = useTime();
+
+  const groundGlow = animate({ from: 0, to: 1, start: 13.5, end: 15.5, ease: Easing.easeOutCubic })(t);
+  const particlesOp = animate({ from: 0, to: 1, start: 14.5, end: 16, ease: Easing.easeOutCubic })(t);
+  const coolArrowOp = animate({ from: 0, to: 1, start: 16, end: 17.5, ease: Easing.easeOutCubic })(t);
+  const cloudOp = animate({ from: 0, to: 1, start: 17, end: 18.5, ease: Easing.easeOutCubic })(t);
+  const captionOp = animate({ from: 0, to: 1, start: 18, end: 19.5, ease: Easing.easeOutCubic })(t);
+
+  const groundY = 545;
+  const cx = 640;
+
+  // Compute particle positions
+  const particles = CONV_PARTICLES.map(p => {
+    const cycle = ((t * p.speed + p.phase) % 1);
+    const x = cx + p.xOff + Math.sin(cycle * Math.PI * 2.2) * 28;
+    const y = groundY - 8 - cycle * 360;
+    const op = cycle < 0.12 ? cycle / 0.12 : cycle > 0.78 ? (1 - cycle) / 0.22 : 1;
+    const heat = 1 - cycle; // hotter at bottom
+    return { x, y, op: op * 0.85 * particlesOp, size: p.size * (1 - cycle * 0.3), heat };
+  });
+
+  return (
+    <>
+      {/* Sky gradient */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(to bottom, #040c1e 0%, #0a2050 30%, #1a4a8a 65%, #2a6ab0 85%, #c8a06a 100%)',
+      }} />
+
+      {/* Ground */}
+      <div style={{
+        position: 'absolute', left: 0, right: 0, top: groundY,
+        height: H - groundY,
+        background: 'linear-gradient(to bottom, #6b4423 0%, #4a2e14 40%, #2a1a08 100%)',
+      }} />
+
+      {/* Ground heated center glow */}
+      <div style={{
+        position: 'absolute', left: cx - 200, top: groundY - 40,
+        width: 400, height: 80,
+        background: 'radial-gradient(ellipse, rgba(255,140,30,0.55) 0%, transparent 70%)',
+        opacity: groundGlow,
+      }} />
+
+      {/* Sun (top right, partially visible) */}
+      <div style={{ position: 'absolute', right: -40, top: -40 }}>
+        <SunDiv size={160} />
+      </div>
+      {/* Sun ray onto ground */}
+      <svg style={{ position: 'absolute', inset: 0, width: W, height: H, pointerEvents: 'none' }}>
+        <defs>
+          <linearGradient id="rayGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="rgba(255,220,80,0)" />
+            <stop offset="100%" stopColor="rgba(255,200,60,0.35)" />
+          </linearGradient>
+        </defs>
+        <polygon points={`1200,0 1280,0 1280,0 820,${groundY}`}
+          fill="url(#rayGrad)" opacity={groundGlow * 0.6} />
+
+        {/* Convection particles */}
+        {particles.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r={p.size / 2}
+            fill={`rgba(${Math.round(255)},${Math.round(p.heat * 100 + 60)},${Math.round(p.heat * 20)},0.75)`}
+            opacity={p.op} />
+        ))}
+
+        {/* Cool air arrows (low, flowing in from sides) */}
+        <g opacity={coolArrowOp}>
+          <SvgArrow x1={100} y1={groundY - 5} x2={480} y2={groundY - 5} color="rgba(100,180,255,0.85)" width={3} headSize={14} />
+          <SvgArrow x1={1180} y1={groundY - 5} x2={800} y2={groundY - 5} color="rgba(100,180,255,0.85)" width={3} headSize={14} />
+          <text x={130} y={groundY + 28} fontFamily={FONT} fontSize={17} fill="rgba(120,190,255,0.85)" fontWeight={400}>Cool air rushes in</text>
+          <text x={1150} y={groundY + 28} textAnchor="end" fontFamily={FONT} fontSize={17} fill="rgba(120,190,255,0.85)" fontWeight={400}>Cool air rushes in</text>
+        </g>
+
+        {/* Rising warm air label */}
+        <g opacity={particlesOp}>
+          <text x={cx + 90} y={groundY - 100} fontFamily={FONT} fontSize={17} fill="rgba(255,160,60,0.85)" fontWeight={400}>Warm air rises</text>
+          <SvgArrow x1={cx + 85} y1={groundY - 110} x2={cx + 85} y2={groundY - 200} color="rgba(255,140,40,0.6)" width={2} headSize={10} />
+        </g>
+
+        {/* Cloud */}
+        <g opacity={cloudOp}>
+          <ellipse cx={cx} cy={148} rx={90} ry={36} fill="rgba(255,255,255,0.88)" />
+          <ellipse cx={cx - 60} cy={162} rx={55} ry={26} fill="rgba(255,255,255,0.82)" />
+          <ellipse cx={cx + 66} cy={165} rx={48} ry={22} fill="rgba(255,255,255,0.8)" />
+          <text x={cx} y={105} textAnchor="middle" fontFamily={FONT} fontSize={15} fill="rgba(200,220,255,0.7)" fontWeight={400}>Cloud forms as warm air cools</text>
+        </g>
+      </svg>
+
+      <div style={{
+        position: 'absolute', left: 640, bottom: 52,
+        transform: `translate(-50%, ${(1 - captionOp) * 12}px)`,
+        textAlign: 'center', opacity: captionOp,
+      }}>
+        <div style={{ fontFamily: FONT, fontSize: 34, fontWeight: 500, color: '#fff' }}>
+          Uneven heating drives convection
+        </div>
+        <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 300, color: 'rgba(200,220,255,0.7)', marginTop: 7 }}>
+          Warm air rises, cools at altitude, and sinks — creating a continuous cycle
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── SCENE 4: Pressure & Wind ──────────────────────────────────────────────────
+function ScenePressure() {
+  const t = useTime();
+  const zoneOp = animate({ from: 0, to: 1, start: 21, end: 23, ease: Easing.easeOutCubic })(t);
+  const arrowOp = animate({ from: 0, to: 1, start: 23, end: 24.5, ease: Easing.easeOutCubic })(t);
+  const coriolisOp = animate({ from: 0, to: 1, start: 25.5, end: 27, ease: Easing.easeOutCubic })(t);
+  const captionOp = animate({ from: 0, to: 1, start: 24, end: 25.5, ease: Easing.easeOutCubic })(t);
+
+  // Flowing wind particles (animated dashes from H to L)
+  const FLOW = Array.from({ length: 8 }, (_, i) => ({
+    yOff: (i / 7 - 0.5) * 300,
+    phase: i / 8,
+  }));
+
+  const HCX = 320, LCX = 960, midY = 380;
+
+  return (
+    <>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(135deg, #060e22 0%, #0a1830 50%, #0d1020 100%)',
+      }} />
+
+      <svg style={{ position: 'absolute', inset: 0, width: W, height: H, pointerEvents: 'none' }}>
+        {/* HIGH PRESSURE zone */}
+        <g opacity={zoneOp}>
+          <ellipse cx={HCX} cy={midY} rx={220} ry={260}
+            fill="rgba(30,80,200,0.12)" stroke="rgba(100,150,255,0.3)" strokeWidth={1.5} />
+          <text x={HCX} y={midY - 18} textAnchor="middle" fontFamily={FONT}
+            fontSize={88} fontWeight={700} fill="rgba(120,170,255,0.85)">H</text>
+          <text x={HCX} y={midY + 44} textAnchor="middle" fontFamily={FONT}
+            fontSize={18} fontWeight={400} fill="rgba(120,170,255,0.6)" letterSpacing="3">HIGH PRESSURE</text>
+          <text x={HCX} y={midY + 70} textAnchor="middle" fontFamily={FONT}
+            fontSize={14} fontWeight={300} fill="rgba(160,200,255,0.5)">dense · cold · sinking air</text>
+
+          {/* Downward compress arrows inside H */}
+          {[-70, 0, 70].map((dx, i) => (
+            <SvgArrow key={i} x1={HCX + dx} y1={midY - 155} x2={HCX + dx} y2={midY - 110}
+              color="rgba(100,150,255,0.4)" width={1.5} headSize={8} />
+          ))}
+          {/* Outward surface arrows */}
+          <SvgArrow x1={HCX} y1={midY + 95} x2={HCX - 180} y2={midY + 95}
+            color="rgba(100,150,255,0.45)" width={1.5} headSize={9} />
+          <SvgArrow x1={HCX} y1={midY + 95} x2={HCX + 180} y2={midY + 95}
+            color="rgba(100,150,255,0.45)" width={1.5} headSize={9} />
+        </g>
+
+        {/* LOW PRESSURE zone */}
+        <g opacity={zoneOp}>
+          <ellipse cx={LCX} cy={midY} rx={220} ry={260}
+            fill="rgba(200,40,40,0.1)" stroke="rgba(255,120,100,0.3)" strokeWidth={1.5} />
+          <text x={LCX} y={midY - 18} textAnchor="middle" fontFamily={FONT}
+            fontSize={88} fontWeight={700} fill="rgba(255,130,110,0.85)">L</text>
+          <text x={LCX} y={midY + 44} textAnchor="middle" fontFamily={FONT}
+            fontSize={18} fontWeight={400} fill="rgba(255,130,110,0.6)" letterSpacing="3">LOW PRESSURE</text>
+          <text x={LCX} y={midY + 70} textAnchor="middle" fontFamily={FONT}
+            fontSize={14} fontWeight={300} fill="rgba(255,180,170,0.5)">warm · rising · expanding air</text>
+
+          {/* Rising arrows inside L */}
+          {[-70, 0, 70].map((dx, i) => (
+            <SvgArrow key={i} x1={LCX + dx} y1={midY - 110} x2={LCX + dx} y2={midY - 155}
+              color="rgba(255,120,100,0.4)" width={1.5} headSize={8} />
+          ))}
+          {/* Inward surface arrows */}
+          <SvgArrow x1={LCX - 180} y1={midY + 95} x2={LCX - 20} y2={midY + 95}
+            color="rgba(255,120,100,0.45)" width={1.5} headSize={9} />
+          <SvgArrow x1={LCX + 180} y1={midY + 95} x2={LCX + 20} y2={midY + 95}
+            color="rgba(255,120,100,0.45)" width={1.5} headSize={9} />
+        </g>
+
+        {/* Main wind arrow H → L */}
+        <g opacity={arrowOp}>
+          <SvgArrow x1={HCX + 230} y1={midY + 95} x2={LCX - 230} y2={midY + 95}
+            color="rgba(255,255,255,0.9)" width={4} headSize={18} />
+          <text x={(HCX + LCX) / 2} y={midY + 130} textAnchor="middle"
+            fontFamily={FONT} fontSize={16} fontWeight={500} fill="rgba(255,255,255,0.7)">
+            WIND FLOWS FROM HIGH TO LOW
+          </text>
+
+          {/* Animated flow dashes */}
+          {FLOW.map((f, i) => {
+            const p = (((t * 0.4 + f.phase) % 1));
+            const x = HCX + 240 + p * (LCX - HCX - 480);
+            return (
+              <circle key={i} cx={x} cy={midY + 95 + f.yOff * 0.05}
+                r={4} fill="rgba(255,255,255,0.6)" opacity={0.5 + 0.5 * Math.sin(p * Math.PI)} />
+            );
+          })}
+        </g>
+
+        {/* Coriolis annotation */}
+        <g opacity={coriolisOp}>
+          <path d={`M 640 ${midY + 150} Q 640 ${midY + 200} 700 ${midY + 240}`}
+            stroke="rgba(255,220,100,0.7)" strokeWidth={1.5} fill="none" strokeDasharray="6 4" />
+          <text x={710} y={midY + 248} fontFamily={FONT} fontSize={15} fill="rgba(255,220,100,0.75)" fontWeight={400}>
+            Coriolis effect curves wind to the right (Northern Hemisphere)
+          </text>
+        </g>
+      </svg>
+
+      <div style={{
+        position: 'absolute', left: 640, bottom: 52,
+        transform: `translate(-50%, ${(1 - captionOp) * 12}px)`,
+        textAlign: 'center', opacity: captionOp,
+      }}>
+        <div style={{ fontFamily: FONT, fontSize: 34, fontWeight: 500, color: '#fff' }}>
+          Pressure differences create wind
+        </div>
+        <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 300, color: 'rgba(200,220,255,0.7)', marginTop: 7 }}>
+          Air always flows from areas of high pressure toward areas of low pressure
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── SCENE 5: Global Wind Belts ────────────────────────────────────────────────
+function SceneGlobalWinds() {
+  const t = useTime();
+  const earthOp = animate({ from: 0, to: 1, start: 29, end: 31, ease: Easing.easeOutCubic })(t);
+  const beltsOp = animate({ from: 0, to: 1, start: 31, end: 33, ease: Easing.easeOutCubic })(t);
+  const jetOp = animate({ from: 0, to: 1, start: 33.5, end: 35, ease: Easing.easeOutCubic })(t);
+  const captionOp = animate({ from: 0, to: 1, start: 34, end: 35.5, ease: Easing.easeOutCubic })(t);
+
+  const ECX = 640, ECY = 360, ER = 260;
+  // latitude y positions on the globe (approximate visual)
+  const latY = (deg) => ECY - Math.sin(deg * Math.PI / 180) * ER * 0.92;
+  const latW = (deg) => Math.cos(deg * Math.PI / 180) * ER;
+
+  const belts = [
+    { lat: 75, color: 'rgba(180,210,255,0.55)', label: 'Polar Easterlies', dir: -1 },
+    { lat: 45, color: 'rgba(120,180,255,0.45)', label: 'Westerlies', dir: 1 },
+    { lat: 15, color: 'rgba(255,180,80,0.45)', label: 'Trade Winds (NE)', dir: -1 },
+    { lat: -15, color: 'rgba(255,200,100,0.4)', label: 'Trade Winds (SE)', dir: 1 },
+    { lat: -45, color: 'rgba(120,180,255,0.45)', label: 'Westerlies', dir: 1 },
+    { lat: -75, color: 'rgba(180,210,255,0.5)', label: 'Polar Easterlies', dir: -1 },
+  ];
+
+  // Jet stream: wavy path near 40°N
+  const jetY = latY(42);
+  const jetPoints = Array.from({ length: 20 }, (_, i) => {
+    const x = ECX - ER * 0.95 + i * (ER * 1.9 / 19);
+    const y = jetY + Math.sin(i * 0.9 + t * 0.8) * 22;
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'radial-gradient(ellipse at 50% 50%, #08142e 0%, #030810 70%)',
+      }} />
+
+      <svg style={{ position: 'absolute', inset: 0, width: W, height: H, pointerEvents: 'none' }}>
+        {/* Earth base */}
+        <g opacity={earthOp}>
+          <circle cx={ECX} cy={ECY} r={ER}
+            fill="#0a2a5a" stroke="rgba(80,140,255,0.25)" strokeWidth={2} />
+          {/* Continent blobs on globe */}
+          <ellipse cx={ECX - 80} cy={ECY - 50} rx={70} ry={85} fill="rgba(46,125,50,0.5)" />
+          <ellipse cx={ECX + 20} cy={ECY - 30} rx={55} ry={120} fill="rgba(56,142,60,0.5)" />
+          <ellipse cx={ECX + 120} cy={ECY - 70} rx={90} ry={80} fill="rgba(46,125,50,0.5)" />
+          <ellipse cx={ECX - 60} cy={ECY + 90} rx={45} ry={65} fill="rgba(56,142,60,0.45)" />
+          {/* Clipping circle to keep continents inside earth */}
+          <circle cx={ECX} cy={ECY} r={ER} fill="none" />
+          {/* Atmosphere glow */}
+          <circle cx={ECX} cy={ECY} r={ER + 18}
+            fill="none" stroke="rgba(100,180,255,0.2)" strokeWidth={20} />
+          {/* Equator line */}
+          <line x1={ECX - ER} y1={ECY} x2={ECX + ER} y2={ECY}
+            stroke="rgba(255,255,255,0.15)" strokeWidth={1.5} strokeDasharray="6 4" />
+          {/* Poles */}
+          <circle cx={ECX} cy={ECY - ER} r={28} fill="rgba(220,240,255,0.35)" />
+          <circle cx={ECX} cy={ECY + ER} r={28} fill="rgba(220,240,255,0.3)" />
+        </g>
+
+        {/* Wind belt bands (horizontal stripes across globe) */}
+        <g opacity={beltsOp} clipPath="url(#earthClip)">
+          <clipPath id="earthClip">
+            <circle cx={ECX} cy={ECY} r={ER} />
+          </clipPath>
+          {belts.map((b, i) => {
+            const y = latY(b.lat);
+            const bandH = 55;
+            return (
+              <rect key={i} x={ECX - ER} y={y - bandH / 2}
+                width={ER * 2} height={bandH}
+                fill={b.color} rx={0} />
+            );
+          })}
+        </g>
+
+        {/* Belt wind arrows & labels (outside Earth, on right side) */}
+        <g opacity={beltsOp}>
+          {belts.map((b, i) => {
+            const y = latY(b.lat);
+            const lx = ECX + ER + 20;
+            const dir = b.dir;
+            return (
+              <g key={i}>
+                <SvgArrow x1={lx} y1={y}
+                  x2={lx + dir * 55} y2={y}
+                  color="rgba(255,255,255,0.6)" width={1.5} headSize={9} />
+                <text x={lx + 70} y={y + 5} fontFamily={FONT} fontSize={14}
+                  fill="rgba(200,220,255,0.75)" fontWeight={400}>{b.label}</text>
+              </g>
+            );
+          })}
+        </g>
+
+        {/* Jet stream */}
+        <g opacity={jetOp}>
+          <polyline points={jetPoints}
+            stroke="rgba(255,220,60,0.85)" strokeWidth={3} fill="none"
+            strokeLinecap="round" strokeLinejoin="round" />
+          <text x={ECX - ER - 130} y={jetY - 14} fontFamily={FONT} fontSize={15}
+            fill="rgba(255,220,60,0.85)" fontWeight={500}>Jet Stream</text>
+          <line x1={ECX - ER - 20} y1={jetY} x2={ECX - ER + 5} y2={jetY}
+            stroke="rgba(255,220,60,0.5)" strokeWidth={1.5} strokeDasharray="4 3" />
+        </g>
+      </svg>
+
+      <div style={{
+        position: 'absolute', left: 640, bottom: 52,
+        transform: `translate(-50%, ${(1 - captionOp) * 12}px)`,
+        textAlign: 'center', opacity: captionOp,
+      }}>
+        <div style={{ fontFamily: FONT, fontSize: 34, fontWeight: 500, color: '#fff' }}>
+          Wind patterns span the entire globe
+        </div>
+        <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 300, color: 'rgba(200,220,255,0.7)', marginTop: 7 }}>
+          Earth's rotation bends winds into persistent belts — the trade winds, westerlies, and polar easterlies
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── SCENE 6: Water Cycle ──────────────────────────────────────────────────────
+function SceneWaterCycle() {
+  const t = useTime();
+  const bgOp = animate({ from: 0, to: 1, start: 37, end: 39, ease: Easing.easeOutCubic })(t);
+  const evapOp = animate({ from: 0, to: 1, start: 39, end: 40.5, ease: Easing.easeOutCubic })(t);
+  const cloudOp = animate({ from: 0, to: 1, start: 40.5, end: 42, ease: Easing.easeOutCubic })(t);
+  const rainOp = animate({ from: 0, to: 1, start: 41.5, end: 43, ease: Easing.easeOutCubic })(t);
+  const runoffOp = animate({ from: 0, to: 1, start: 42.5, end: 44, ease: Easing.easeOutCubic })(t);
+  const captionOp = animate({ from: 0, to: 1, start: 43.5, end: 45, ease: Easing.easeOutCubic })(t);
+
+  const OCEAN_X = 50, OCEAN_W = 400, SEA_Y = 480;
+  const MTN_X = 1050, MTN_TOP = 220;
+  const cloudCX = 620, cloudCY = 160;
+
+  // Evap particles
+  const evapParticles = Array.from({ length: 10 }, (_, i) => {
+    const cycle = (((t * 0.35 + i / 10) % 1));
+    return {
+      x: OCEAN_X + 80 + sr(i * 3.1) * (OCEAN_W - 80),
+      y: SEA_Y - 10 - cycle * 310,
+      op: cycle < 0.15 ? cycle / 0.15 : cycle > 0.75 ? (1 - cycle) / 0.25 : 1,
+    };
+  });
+
+  // Rain drops
+  const rainDrops = Array.from({ length: 12 }, (_, i) => {
+    const cycle = (((t * 0.7 + sr(i * 2.3)) % 1));
+    return {
+      x: MTN_X - 200 + sr(i * 1.7) * 240,
+      y: cloudCY + 70 + cycle * (MTN_TOP - cloudCY - 60),
+      op: cycle > 0.85 ? (1 - cycle) / 0.15 : 0.6 + 0.4 * cycle,
+    };
+  });
+
+  return (
+    <>
+      {/* Sky */}
+      <div style={{
+        position: 'absolute', inset: 0, opacity: bgOp,
+        background: 'linear-gradient(to bottom, #0d2040 0%, #1a4a80 35%, #2a7ab8 65%, #4496c8 80%, #3a7a54 100%)',
+      }} />
+
+      {/* Sun */}
+      <div style={{ position: 'absolute', left: 60, top: 50, opacity: bgOp }}>
+        <SunDiv size={130} />
+      </div>
+
+      <svg style={{ position: 'absolute', inset: 0, width: W, height: H, pointerEvents: 'none' }} opacity={bgOp}>
+        {/* Ocean */}
+        <rect x={OCEAN_X} y={SEA_Y} width={OCEAN_W} height={H - SEA_Y}
+          fill="url(#oceanGrad)" rx={8} />
+        <defs>
+          <linearGradient id="oceanGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#1565c0" />
+            <stop offset="100%" stopColor="#0d47a1" />
+          </linearGradient>
+          <linearGradient id="landGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#3a6b38" />
+            <stop offset="60%" stopColor="#6b4423" />
+            <stop offset="100%" stopColor="#4a2e14" />
+          </linearGradient>
+          <linearGradient id="snowGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#e8ecf0" />
+            <stop offset="100%" stopColor="#c0c8d0" />
+          </linearGradient>
+        </defs>
+
+        {/* Land / terrain */}
+        <path d={`M ${OCEAN_X + OCEAN_W} ${SEA_Y} 
+                   Q 650 ${SEA_Y - 20} 750 ${SEA_Y - 80}
+                   Q 850 ${SEA_Y - 140} 950 ${SEA_Y - 120}
+                   Q 1000 ${SEA_Y - 130} ${MTN_X} ${MTN_TOP}
+                   L 1280 ${MTN_TOP + 120} L 1280 ${H} L ${OCEAN_X + OCEAN_W} ${H} Z`}
+          fill="url(#landGrad)" />
+        {/* Snow cap */}
+        <path d={`M ${MTN_X} ${MTN_TOP}
+                   Q ${MTN_X - 60} ${MTN_TOP + 80} ${MTN_X - 100} ${MTN_TOP + 70}
+                   Q ${MTN_X + 100} ${MTN_TOP + 70} ${MTN_X + 65} ${MTN_TOP + 80} Z`}
+          fill="url(#snowGrad)" opacity={0.9} />
+
+        {/* OCEAN LABEL */}
+        <text x={OCEAN_X + OCEAN_W / 2} y={SEA_Y + 50} textAnchor="middle"
+          fontFamily={FONT} fontSize={16} fill="rgba(160,210,255,0.7)" fontWeight={400}>OCEAN</text>
+
+        {/* EVAPORATION */}
+        <g opacity={evapOp}>
+          {evapParticles.map((p, i) => (
+            <circle key={i} cx={p.x} cy={p.y} r={5}
+              fill="rgba(100,180,255,0.65)" opacity={p.op} />
+          ))}
+          <text x={OCEAN_X + OCEAN_W / 2} y={SEA_Y - 30} textAnchor="middle"
+            fontFamily={FONT} fontSize={17} fill="rgba(100,180,255,0.9)" fontWeight={500}>① Evaporation</text>
+          {/* Arrow from ocean to cloud */}
+          <SvgArrow x1={OCEAN_X + OCEAN_W / 2} y1={SEA_Y - 60} x2={cloudCX - 120} y2={cloudCY + 50}
+            color="rgba(100,170,255,0.4)" width={2} headSize={10} dashed={true} />
+        </g>
+
+        {/* CLOUD */}
+        <g opacity={cloudOp}>
+          <ellipse cx={cloudCX} cy={cloudCY} rx={110} ry={44} fill="rgba(245,248,255,0.92)" />
+          <ellipse cx={cloudCX - 72} cy={cloudCY + 14} rx={68} ry={32} fill="rgba(240,245,255,0.88)" />
+          <ellipse cx={cloudCX + 78} cy={cloudCY + 18} rx={58} ry={28} fill="rgba(245,248,255,0.86)" />
+          <text x={cloudCX} y={cloudCY - 58} textAnchor="middle"
+            fontFamily={FONT} fontSize={17} fill="rgba(200,220,255,0.85)" fontWeight={500}>② Condensation</text>
+        </g>
+
+        {/* RAIN */}
+        <g opacity={rainOp}>
+          {rainDrops.map((d, i) => (
+            <line key={i} x1={d.x} y1={d.y} x2={d.x - 4} y2={d.y + 14}
+              stroke="rgba(80,160,255,0.7)" strokeWidth={2} strokeLinecap="round" opacity={d.op} />
+          ))}
+          <text x={MTN_X - 110} y={cloudCY + 90} textAnchor="middle"
+            fontFamily={FONT} fontSize={17} fill="rgba(100,180,255,0.85)" fontWeight={500}>③ Precipitation</text>
+        </g>
+
+        {/* RUNOFF */}
+        <g opacity={runoffOp}>
+          <path d={`M ${MTN_X - 80} ${MTN_TOP + 120} Q 800 ${SEA_Y - 30} ${OCEAN_X + OCEAN_W + 20} ${SEA_Y - 10}`}
+            stroke="rgba(80,160,255,0.7)" strokeWidth={3} fill="none" strokeLinecap="round" />
+          <text x={780} y={SEA_Y - 55} textAnchor="middle"
+            fontFamily={FONT} fontSize={17} fill="rgba(100,180,255,0.85)" fontWeight={500}>④ Runoff</text>
+        </g>
+      </svg>
+
+      <div style={{
+        position: 'absolute', left: 640, bottom: 52,
+        transform: `translate(-50%, ${(1 - captionOp) * 12}px)`,
+        textAlign: 'center', opacity: captionOp,
+      }}>
+        <div style={{ fontFamily: FONT, fontSize: 34, fontWeight: 500, color: '#fff' }}>
+          Wind drives the water cycle
+        </div>
+        <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 300, color: 'rgba(200,220,255,0.7)', marginTop: 7 }}>
+          Evaporation → clouds → precipitation → rivers → ocean. The cycle never stops.
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── SCENE 7: The Moon ─────────────────────────────────────────────────────────
+function SceneMoon() {
+  const t = useTime();
+  const earthOp = animate({ from: 0, to: 1, start: 46, end: 48, ease: Easing.easeOutCubic })(t);
+  const moonOrbitOp = animate({ from: 0, to: 1, start: 47.5, end: 49.5, ease: Easing.easeOutCubic })(t);
+  const tideOp = animate({ from: 0, to: 1, start: 49, end: 51, ease: Easing.easeOutCubic })(t);
+  const coastOp = animate({ from: 0, to: 1, start: 51.5, end: 53, ease: Easing.easeOutCubic })(t);
+  const captionOp = animate({ from: 0, to: 1, start: 50, end: 52, ease: Easing.easeOutCubic })(t);
+
+  const ECX = 420, ECY = 360, ER = 170;
+  const ORBIT_R = 280;
+  const moonAngle = ((t - 46) * 0.25) * Math.PI * 2 - Math.PI * 0.3;
+  const moonCX = ECX + Math.cos(moonAngle) * ORBIT_R;
+  const moonCY = ECY + Math.sin(moonAngle) * ORBIT_R * 0.35; // slightly elliptical
+  const MR = 52;
+
+  // Tidal bulge: Earth slightly elliptical toward/away from moon
+  const bulgeAngle = moonAngle;
+  const bx = Math.cos(bulgeAngle);
+  const by = Math.sin(bulgeAngle);
+  const bulgeAmt = 30 * tideOp;
+
+  // Coastal tide
+  const tidePhase = moonAngle % (Math.PI * 2);
+  const tideHeight = Math.cos(tidePhase) * 30;
+
+  // Gravity arrows from moon toward earth
+  const gravArrows = Array.from({ length: 5 }, (_, i) => {
+    const off = (i / 4 - 0.5) * 80;
+    const perpX = -Math.sin(bulgeAngle) * off;
+    const perpY = Math.cos(bulgeAngle) * off;
+    const startX = moonCX - bx * (MR + 10) + perpX;
+    const startY = moonCY - by * (MR + 10) + perpY;
+    const endX = ECX + bx * (ER + 5) + perpX * 0.5;
+    const endY = ECY + by * (ER + 5) + perpY * 0.5;
+    return { x1: startX, y1: startY, x2: endX, y2: endY };
+  });
+
+  return (
+    <>
+      <div style={{ position: 'absolute', inset: 0, background: '#030810' }} />
+
+      <svg style={{ position: 'absolute', inset: 0, width: W, height: H, pointerEvents: 'none' }}>
+        {/* Orbit path */}
+        <ellipse cx={ECX} cy={ECY} rx={ORBIT_R} ry={ORBIT_R * 0.35}
+          fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={1.5}
+          strokeDasharray="6 5" opacity={moonOrbitOp} />
+
+        {/* Earth */}
+        <g opacity={earthOp}>
+          <defs>
+            <radialGradient id="earthGrad2" cx="38%" cy="32%" r="70%">
+              <stop offset="0%" stopColor="#4fc3f7" />
+              <stop offset="22%" stopColor="#1976d2" />
+              <stop offset="55%" stopColor="#0d47a1" />
+              <stop offset="100%" stopColor="#041228" />
+            </radialGradient>
+          </defs>
+          <circle cx={ECX} cy={ECY} r={ER}
+            fill="url(#earthGrad2)" />
+          {/* Continent blobs */}
+          <ellipse cx={ECX - 40} cy={ECY - 30} rx={45} ry={55} fill="rgba(46,125,50,0.7)" clipPath="url(#earthClip2)" />
+          <ellipse cx={ECX + 30} cy={ECY - 20} rx={35} ry={80} fill="rgba(56,142,60,0.65)" clipPath="url(#earthClip2)" />
+          <ellipse cx={ECX + 90} cy={ECY - 50} rx={55} ry={50} fill="rgba(46,125,50,0.65)" clipPath="url(#earthClip2)" />
+          <clipPath id="earthClip2"><circle cx={ECX} cy={ECY} r={ER} /></clipPath>
+          {/* Night side */}
+          <circle cx={ECX} cy={ECY} r={ER}
+            fill="none"
+            style={{ background: 'transparent' }} />
+          <radialGradient id="earthNight2" cx="68%" cy="60%" r="55%">
+            <stop offset="0%" stopColor="rgba(0,5,20,0)" />
+            <stop offset="60%" stopColor="rgba(0,5,20,0.75)" />
+          </radialGradient>
+          <circle cx={ECX} cy={ECY} r={ER} fill="url(#earthNight2)" />
+          {/* Atmosphere */}
+          <circle cx={ECX} cy={ECY} r={ER + 16}
+            fill="none" stroke="rgba(100,180,255,0.2)" strokeWidth={14} />
+
+          {/* Tidal bulges */}
+          <g opacity={tideOp}>
+            {/* Bulge toward moon */}
+            <ellipse
+              cx={ECX + bx * bulgeAmt * 0.6}
+              cy={ECY + by * bulgeAmt * 0.6}
+              rx={ER + bulgeAmt * Math.abs(bx) + 8}
+              ry={ER + bulgeAmt * Math.abs(by) + 8}
+              fill="none" stroke="rgba(80,160,255,0.45)" strokeWidth={6}
+              opacity={0.7}
+              transform={`rotate(${bulgeAngle * 180 / Math.PI}, ${ECX}, ${ECY})`}
+            />
+            {/* Actually let's just use a simpler tidal ellipse */}
+            <ellipse cx={ECX} cy={ECY}
+              rx={ER + bulgeAmt}
+              ry={ER - bulgeAmt * 0.4}
+              fill="rgba(50,130,255,0.15)"
+              stroke="rgba(80,160,255,0.4)" strokeWidth={3}
+              transform={`rotate(${bulgeAngle * 180 / Math.PI}, ${ECX}, ${ECY})`}
+            />
+            <text x={ECX + bx * (ER + bulgeAmt + 20)} y={ECY + by * (ER + bulgeAmt + 20) + 5}
+              textAnchor="middle" fontFamily={FONT} fontSize={13}
+              fill="rgba(100,180,255,0.75)" fontWeight={400}>HIGH TIDE</text>
+          </g>
+        </g>
+
+        {/* Moon */}
+        <g opacity={moonOrbitOp}>
+          <defs>
+            <radialGradient id="moonGrad" cx="35%" cy="32%" r="68%">
+              <stop offset="0%" stopColor="#e8e0d0" />
+              <stop offset="50%" stopColor="#b0a898" />
+              <stop offset="100%" stopColor="#6e6458" />
+            </radialGradient>
+          </defs>
+          <circle cx={moonCX} cy={moonCY} r={MR}
+            fill="url(#moonGrad)"
+            style={{ filter: 'drop-shadow(0 0 20px rgba(200,190,180,0.3))' }} />
+          {/* Moon craters */}
+          <circle cx={moonCX - 14} cy={moonCY - 10} r={7} fill="rgba(0,0,0,0.15)" />
+          <circle cx={moonCX + 18} cy={moonCY + 12} r={5} fill="rgba(0,0,0,0.12)" />
+          <circle cx={moonCX + 5} cy={moonCY - 22} r={4} fill="rgba(0,0,0,0.1)" />
+          {/* Night side */}
+          <circle cx={moonCX} cy={moonCY} r={MR}
+            fill="url(#moonNight)" />
+          <radialGradient id="moonNight" cx="72%" cy="65%" r="55%">
+            <stop offset="0%" stopColor="rgba(0,0,0,0)" />
+            <stop offset="60%" stopColor="rgba(0,0,0,0.65)" />
+          </radialGradient>
+        </g>
+
+        {/* Gravity arrows */}
+        <g opacity={tideOp * 0.85}>
+          {gravArrows.map((a, i) => (
+            <SvgArrow key={i} x1={a.x1} y1={a.y1} x2={a.x2} y2={a.y2}
+              color="rgba(200,190,160,0.5)" width={1.5} headSize={9} />
+          ))}
+          <text x={(moonCX + ECX) / 2} y={(moonCY + ECY) / 2 - 16}
+            textAnchor="middle" fontFamily={FONT} fontSize={14}
+            fill="rgba(200,190,160,0.6)" fontWeight={400} fontStyle="italic">gravity</text>
+        </g>
+
+        {/* Right side: Coastal tide diagram */}
+        <g opacity={coastOp}>
+          <text x={940} y={120} textAnchor="middle" fontFamily={FONT}
+            fontSize={20} fontWeight={500} fill="rgba(255,255,255,0.9)">Coastal Tides</text>
+
+          {/* Shore cross-section */}
+          <rect x={820} y={280} width={240} height={200} rx={8} fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.1)" strokeWidth={1} />
+          {/* Ground */}
+          <rect x={820} y={400} width={240} height={80} rx={4} fill="rgba(100,70,40,0.6)" />
+          {/* Water at variable level */}
+          {(() => {
+            const wY = 380 - tideHeight;
+            return (
+              <>
+                <rect x={820} y={wY} width={240} height={400 - wY} rx={4}
+                  fill="rgba(30,100,200,0.5)" />
+                <line x1={820} y1={wY} x2={1060} y2={wY}
+                  stroke="rgba(100,180,255,0.7)" strokeWidth={2} />
+                <text x={1070} y={wY + 4} fontFamily={FONT} fontSize={13}
+                  fill="rgba(100,180,255,0.75)" fontWeight={500}>
+                  {tideHeight > 0 ? 'HIGH TIDE' : 'LOW TIDE'}
+                </text>
+                <SvgArrow x1={1050} y1={wY + (tideHeight > 0 ? 30 : -30)}
+                  x2={1050} y2={wY}
+                  color={tideHeight > 0 ? 'rgba(100,180,255,0.6)' : 'rgba(180,120,80,0.6)'}
+                  width={2} headSize={8} />
+              </>
+            );
+          })()}
+          <text x={940} y={440} textAnchor="middle" fontFamily={FONT}
+            fontSize={13} fill="rgba(160,120,80,0.7)" fontWeight={400}>shore</text>
+        </g>
+      </svg>
+
+      <div style={{
+        position: 'absolute', left: 640, bottom: 52,
+        transform: `translate(-50%, ${(1 - captionOp) * 12}px)`,
+        textAlign: 'center', opacity: captionOp,
+      }}>
+        <div style={{ fontFamily: FONT, fontSize: 34, fontWeight: 500, color: '#fff' }}>
+          The Moon pulls Earth's oceans
+        </div>
+        <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 300, color: 'rgba(200,220,255,0.7)', marginTop: 7 }}>
+          Gravity stretches the oceans into a bulge that follows the Moon — creating high and low tides twice a day
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── SCENE 8: Everything Connected ────────────────────────────────────────────
+function SceneConnected() {
+  const t = useTime();
+  const lt = t - 55;
+  const earthOp = animate({ from: 0, to: 1, start: 55, end: 57.5, ease: Easing.easeOutCubic })(t);
+  const nodesOp = animate({ from: 0, to: 1, start: 57, end: 59, ease: Easing.easeOutCubic })(t);
+  const linesOp = animate({ from: 0, to: 1, start: 58.5, end: 60.5, ease: Easing.easeOutCubic })(t);
+  const finalOp = animate({ from: 0, to: 1, start: 61, end: 63, ease: Easing.easeOutCubic })(t);
+
+  const CX = 640, CY = 300, CR = 130;
+  const nodes = [
+    { label: 'THE SUN', sub: 'energy source', x: CX, y: CY - 270, color: '#ffe033' },
+    { label: 'HEAT', sub: 'uneven warming', x: CX + 280, y: CY - 130, color: 'rgba(255,140,60,0.9)' },
+    { label: 'WIND', sub: 'pressure & Coriolis', x: CX + 300, y: CY + 100, color: 'rgba(120,200,255,0.9)' },
+    { label: 'RAIN', sub: 'water cycle', x: CX, y: CY + 280, color: 'rgba(80,180,255,0.9)' },
+    { label: 'OCEANS', sub: 'heat reservoir', x: CX - 300, y: CY + 100, color: 'rgba(30,120,220,0.9)' },
+    { label: 'THE MOON', sub: 'tidal forces', x: CX - 280, y: CY - 130, color: 'rgba(200,190,170,0.9)' },
+  ];
+
+  // Flow dots along connections (to Earth center)
+  const flowDots = nodes.map((n, ni) => {
+    const p = (((lt * 0.3 + ni / nodes.length) % 1));
+    return {
+      x: n.x + (CX - n.x) * p,
+      y: n.y + (CY - n.y) * p,
+      color: n.color,
+    };
+  });
+
+  return (
+    <>
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: 'radial-gradient(ellipse at 50% 45%, #0a1830 0%, #030810 70%)',
+      }} />
+
+      <svg style={{ position: 'absolute', inset: 0, width: W, height: H, pointerEvents: 'none' }}>
+        {/* Connection lines from each node to Earth */}
+        <g opacity={linesOp}>
+          {nodes.map((n, i) => (
+            <line key={i} x1={n.x} y1={n.y} x2={CX} y2={CY}
+              stroke={n.color} strokeWidth={1.5} opacity={0.35}
+              strokeDasharray="5 4" />
+          ))}
+          {/* Animated flow dots */}
+          {flowDots.map((d, i) => (
+            <circle key={i} cx={d.x} cy={d.y} r={5} fill={d.color} opacity={0.7} />
+          ))}
+        </g>
+
+        {/* Earth in center */}
+        <g opacity={earthOp}>
+          <circle cx={CX} cy={CY} r={CR}
+            fill="#0d47a1" />
+          <defs>
+            <radialGradient id="earthGrad3" cx="38%" cy="32%" r="70%">
+              <stop offset="0%" stopColor="#4fc3f7" />
+              <stop offset="22%" stopColor="#1976d2" />
+              <stop offset="55%" stopColor="#0d47a1" />
+              <stop offset="100%" stopColor="#041228" />
+            </radialGradient>
+          </defs>
+          <circle cx={CX} cy={CY} r={CR} fill="url(#earthGrad3)" />
+          <ellipse cx={CX - 20} cy={CY - 15} rx={35} ry={45} fill="rgba(46,125,50,0.6)" clipPath="url(#eC3)" />
+          <ellipse cx={CX + 30} cy={CY - 8} rx={28} ry={65} fill="rgba(56,142,60,0.55)" clipPath="url(#eC3)" />
+          <ellipse cx={CX + 70} cy={CY - 35} rx={45} ry={38} fill="rgba(46,125,50,0.6)" clipPath="url(#eC3)" />
+          <clipPath id="eC3"><circle cx={CX} cy={CY} r={CR} /></clipPath>
+          <circle cx={CX} cy={CY} r={CR} fill="none" stroke="rgba(100,180,255,0.25)" strokeWidth={2} />
+          <circle cx={CX} cy={CY} r={CR + 14}
+            fill="none" stroke="rgba(100,180,255,0.15)" strokeWidth={12} />
+          <text x={CX} y={CY + 6} textAnchor="middle" fontFamily={FONT}
+            fontSize={18} fontWeight={600} fill="rgba(255,255,255,0.9)">EARTH</text>
+        </g>
+
+        {/* Node labels */}
+        <g opacity={nodesOp}>
+          {nodes.map((n, i) => {
+            const isTop = n.y < CY;
+            const isCenter = Math.abs(n.x - CX) < 100;
+            const anchor = n.x < CX - 50 ? 'end' : n.x > CX + 50 ? 'start' : 'middle';
+            return (
+              <g key={i}>
+                <circle cx={n.x} cy={n.y} r={42}
+                  fill="rgba(255,255,255,0.05)" stroke={n.color} strokeWidth={1.5} opacity={0.6} />
+                <text x={n.x} y={n.y - 4} textAnchor="middle" fontFamily={FONT}
+                  fontSize={14} fontWeight={700} fill={n.color} letterSpacing="1">{n.label}</text>
+                <text x={n.x} y={n.y + 14} textAnchor="middle" fontFamily={FONT}
+                  fontSize={11} fontWeight={300} fill="rgba(200,220,255,0.55)">{n.sub}</text>
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+
+      {/* Final message */}
+      <div style={{
+        position: 'absolute', left: 0, right: 0, bottom: 52,
+        textAlign: 'center', opacity: finalOp,
+        transform: `translateY(${(1 - finalOp) * 14}px)`,
+      }}>
+        <div style={{ fontFamily: FONT, fontSize: 34, fontWeight: 500, color: '#fff', letterSpacing: '-0.01em' }}>
+          All these forces work together
+        </div>
+        <div style={{ fontFamily: FONT, fontSize: 19, fontWeight: 300, color: 'rgba(200,220,255,0.7)', marginTop: 8, maxWidth: 780, margin: '8px auto 0' }}>
+          Sun heats the air → air moves as wind → wind drives rain → oceans store heat → the Moon stirs the tides.<br/>
+          <span style={{ opacity: 0.6, fontStyle: 'italic' }}>Weather is the planet breathing.</span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+function App() {
+  return (
+    <div id="stage-wrap" style={{ position: 'absolute', inset: 0 }}>
+      <Stage width={1280} height={720} duration={65} background="#030810" persistKey="weather-v1">
+        <TimeTagger />
+        <Stars />
+        <Scene start={0} end={6.5}><SceneTitle /></Scene>
+        <Scene start={5} end={14}><SceneSun /></Scene>
+        <Scene start={13} end={22}><SceneConvection /></Scene>
+        <Scene start={21} end={30.5}><ScenePressure /></Scene>
+        <Scene start={29} end={38}><SceneGlobalWinds /></Scene>
+        <Scene start={37} end={47}><SceneWaterCycle /></Scene>
+        <Scene start={46} end={56}><SceneMoon /></Scene>
+        <Scene start={55} end={65}><SceneConnected /></Scene>
+      </Stage>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
